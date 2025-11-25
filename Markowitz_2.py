@@ -45,22 +45,49 @@ Strategy Creation
 Create your own strategy, you can add parameter but please remain "price" and "exclude" unchanged
 """
 
+def my_opt_helper(mu, Sigma, gamma=0):
+    n = len(mu)
+    model = gp.Model("Markowitz Portfolio Optimization")
+    model.setParam('OutputFlag', 0)  # Suppress Gurobi output
+
+    # Decision Variables: Portfolio Weights
+    w = model.addMVar(n, name="w", lb=0)
+
+    # Objective: Maximize Risk-Adjusted Return
+    linear_term = w @ mu
+    quadratic_term = w @ Sigma @ w
+    objective = linear_term - (gamma/2) * quadratic_term
+    model.setObjective(objective, gp.GRB.MAXIMIZE)
+
+    # Constraint: Weights Sum to 1
+    model.addConstr(w.sum() == 1, name="budget")
+
+    # Optimize the Model
+    model.optimize()
+
+    # Extract Optimal Weights
+    opt_weights = w.X
+
+    return opt_weights
 
 class MyPortfolio:
     """
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(self, price, exclude, lookback=50, gamma=0, momentum_window=20):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
         self.lookback = lookback
         self.gamma = gamma
+        self.momentum_window = momentum_window
+
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
         assets = self.price.columns[self.price.columns != self.exclude]
+        asset_list = assets.tolist()
 
         # Calculate the portfolio weights
         self.portfolio_weights = pd.DataFrame(
@@ -70,8 +97,23 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
+        momentum_returns = self.returns[assets].rolling(window=self.momentum_window).sum().fillna(0)
+        for i in range(self.lookback + 1, len(self.price)):
+            R_n = self.returns[assets].iloc[i - self.lookback : i]
+            mu_base = R_n.mean().values
+            current_momentum = momentum_returns.iloc[i].values
+            adjusted_mu = mu_base + 0.1*current_momentum
+            mu = adjusted_mu
+
+            if(i%5==0) or (i==self.lookback + 1):
+                Sigma = R_n.cov().values
+                last_Sigma = Sigma
+            else:
+                Sigma = last_Sigma
         
-        
+            opt_weights = my_opt_helper(mu, Sigma, self.gamma)
+            self.portfolio_weights.loc[self.price.index[i], assets] = opt_weights
+        self.portfolio_weights[self.exclude] = 0
         """
         TODO: Complete Task 4 Above
         """
